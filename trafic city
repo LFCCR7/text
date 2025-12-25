@@ -1,0 +1,1100 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <limits.h>	//提供INT_MAX最大值
+#include <ctype.h> // 用于字符校验
+
+//宏定义
+#define MAX_CITY 10                
+#define INF INT_MAX                
+#define CITY_NAME_LEN 20           
+#define DATA_FILE "traffic_data.txt" 
+
+//城市结构体
+typedef struct {
+    char name[CITY_NAME_LEN]; 
+    int is_valid;             // 是否有效
+} City;
+
+// 图结构体 邻接矩阵
+typedef struct {
+    City cities[MAX_CITY];
+    int city_distance[MAX_CITY][MAX_CITY]; // 城市距离矩阵
+    int city_count;                        // 有效城市数量
+} Graph;
+
+// 交通图实例
+Graph graph;
+
+// 函数声明
+// 基础功能函数
+void init_graph();
+int find_city_index(const char *city_name);
+void load_data_from_file();
+void save_data_to_file();
+
+// 城市操作函数
+void add_city();
+void delete_city();
+void query_city();
+void modify_city();
+
+// 道路操作函数
+void add_road();
+void delete_road();
+void query_road();
+void modify_road(); // 统一函数名
+
+// 核心算法函数
+void dijkstra_shortest_path();
+
+// 菜单展示函数
+void print_menu_first();
+void print_menu_city();
+void print_menu_road(); // 修正命名笔误
+void print_menu_file();
+
+// 初始化交通图
+void init_graph() {
+    graph.city_count = 0;
+    // 初始化城市数组
+    for (int i = 0; i < MAX_CITY; i++) {
+        graph.cities[i].is_valid = 0; //初始化有效状态
+        memset(graph.cities[i].name, 0, sizeof(graph.cities[i].name));
+        // 初始化距离矩阵
+        for (int j = 0; j < MAX_CITY; j++) {
+            graph.city_distance[i][j] = INF;
+            if (i == j) {
+                graph.city_distance[i][j] = 0; //自身到自身距离为0
+            }
+        }
+    }
+}
+
+// 根据城市名称查找索引
+int find_city_index(const char *city_name) {
+    // 遍历所有城市
+    for (int i = 0; i < MAX_CITY; i++) {
+        if (graph.cities[i].is_valid && strcmp(graph.cities[i].name, city_name) == 0) {
+            return i;
+        }
+    }
+    return -1; // 未找到返回-1
+}
+
+// 从文件加载数据
+void load_data_from_file() {
+    FILE *fp = fopen(DATA_FILE, "r");
+    if (fp == NULL) {
+        //printf("文件不存在，将创建新文件\n");
+        return;
+    }
+
+    init_graph(); //加载前清空数据
+
+    //读取城市数据
+    int city_num;
+    fscanf(fp, "%d", &city_num);
+    if (city_num == 0) {
+        printf("文件中无城市数据\n");
+        fclose(fp);
+        return;
+    }
+    if (city_num < 0 || city_num > MAX_CITY) {
+        printf("城市数量无效\n");
+        fclose(fp);
+        return;
+    }
+
+    for (int i = 0; i < city_num; i++) {
+        char city_name[CITY_NAME_LEN];
+        fscanf(fp, "%s", city_name);
+        // 找到第一个无效位置赋值
+        for (int j = 0; j < MAX_CITY; j++) {
+            if (!graph.cities[j].is_valid) {
+                strcpy(graph.cities[j].name, city_name);
+                graph.cities[j].is_valid = 1;
+                graph.city_count++;
+                break;
+            }
+        }
+    }
+
+    // 读取道路数据
+    int road_num;
+    fscanf(fp, "%d", &road_num);
+
+    if (road_num == 0) {
+        printf("文件中无道路数据\n");
+        fclose(fp);
+        return;
+    }
+    // 道路数量最大值：n*(n-1)/2（无向图）
+    if (road_num < 0 || road_num > (graph.city_count * (graph.city_count - 1) / 2)) {
+        printf("道路数量无效\n");
+        fclose(fp);
+        return;
+    }
+
+    for (int i = 0; i < road_num; i++) {
+        char city1[CITY_NAME_LEN], city2[CITY_NAME_LEN];
+        int distance;
+        fscanf(fp, "%s %s %d", city1, city2, &distance);
+
+        int index1 = find_city_index(city1);
+        int index2 = find_city_index(city2);
+
+        if (index1 == -1 || index2 == -1) {
+            printf("道路数据中包含不存在的城市\n");
+            fclose(fp);
+            return;
+        }
+        if (distance <= 0) {
+            printf("道路距离无效\n");
+            fclose(fp);
+            return;
+        }
+        // 无向图双向赋值
+        graph.city_distance[index1][index2] = distance;
+        graph.city_distance[index2][index1] = distance;
+    }
+
+    fclose(fp);
+    printf("数据加载完成\n");
+}
+
+// 将当前图数据保存到文件
+void save_data_to_file() {
+    FILE *fp = fopen(DATA_FILE, "w");
+    if (fp == NULL) {
+        printf("文件打开失败\n");
+        return;
+    }
+
+    // 写入城市数量
+    fprintf(fp, "%d\n", graph.city_count);
+
+    // 写入城市信息
+    for (int i = 0; i < MAX_CITY; i++) {
+        if (graph.cities[i].is_valid) {
+            fprintf(fp, "%s ", graph.cities[i].name);
+        }
+    }
+    fprintf(fp, "\n");
+
+    // 先统计道路数量（去重）
+    int road_count = 0;
+    for (int i = 0; i < MAX_CITY; i++) {
+        if (!graph.cities[i].is_valid) continue;
+        for (int j = i + 1; j < MAX_CITY; j++) {
+            if (graph.cities[j].is_valid && graph.city_distance[i][j] != INF && graph.city_distance[i][j] > 0) {
+                road_count++;
+            }
+        }
+    }
+    fprintf(fp, "%d\n", road_count); // 先写入道路数量
+
+    // 再写入道路信息
+    for (int i = 0; i < MAX_CITY; i++) {
+        if (!graph.cities[i].is_valid) continue;
+        for (int j = i + 1; j < MAX_CITY; j++) {
+            if (graph.cities[j].is_valid && graph.city_distance[i][j] != INF && graph.city_distance[i][j] > 0) {
+                fprintf(fp, "%s %s %d\n", graph.cities[i].name, graph.cities[j].name, graph.city_distance[i][j]);
+            }
+        }
+    }
+
+    fclose(fp);
+    printf("数据保存完成\n");
+}
+
+// 添加城市
+void add_city() {
+    if (graph.city_count >= MAX_CITY) {
+        printf("城市数量已达上限\n");
+        return;
+    }
+
+    char city_name[CITY_NAME_LEN];
+    printf("请输入城市名称：");
+    while (1) {
+        scanf("%s", city_name);
+
+        // 非空判断
+        if (strlen(city_name) == 0) {
+            printf("城市名称不能为空，请重新输入：\n");
+            continue;
+        }
+        // 长度判断（预留结束符位置）
+        if (strlen(city_name) >= CITY_NAME_LEN - 1) {
+            printf("城市名称长度不能超过%d个字符，请重新输入：\n", CITY_NAME_LEN - 1);
+            continue;
+        }
+        // 不含空格判断
+        if (strchr(city_name, ' ')) {
+            printf("城市名称不能包含空格，请重新输入：\n");
+            continue;
+        }
+
+        // 不含数字和字母判断
+        int is_right = 1;
+        int name_len = strlen(city_name); // 提前计算长度，避免重复调用
+        for (int i = 0; i < name_len; i++) {
+            if (isdigit(city_name[i]) || isalpha(city_name[i])) {
+                printf("城市名称不能包含数字或字母，请重新输入：\n");
+                is_right = 0;
+                break;
+            }
+        }
+        if (!is_right) continue;
+
+        // 不重复判断
+        if (find_city_index(city_name) != -1) {
+            printf("城市名称已存在，请重新输入：\n");
+        } else {
+            break;
+        }
+    }
+
+    // 找到第一个无效位置添加城市
+    for (int i = 0; i < MAX_CITY; i++) {
+        if (!graph.cities[i].is_valid) {
+            strcpy(graph.cities[i].name, city_name);
+            graph.cities[i].is_valid = 1;
+            graph.city_count++;
+            printf("城市【%s】添加成功！\n", city_name);
+            save_data_to_file();
+            return;
+        }
+    }
+}
+
+// 删除城市
+void delete_city() {
+    if (graph.city_count == 0) {
+        printf("城市数量为空，无法删除\n");
+        return;
+    }
+
+    char city_name[CITY_NAME_LEN];
+    printf("请输入城市名称：");
+    while (1) {
+        scanf("%s", city_name);
+
+        if (strlen(city_name) == 0) {
+            printf("城市名称不能为空，请重新输入：\n");
+            continue;
+        }
+        if (strlen(city_name) >= CITY_NAME_LEN - 1) {
+            printf("城市名称长度不能超过%d个字符，请重新输入：\n", CITY_NAME_LEN - 1);
+            continue;
+        }
+        if (strchr(city_name, ' ')) {
+            printf("城市名称不能包含空格，请重新输入：\n");
+            continue;
+        }
+
+        // 不含数字和字母判断
+        int is_right = 1;
+        int name_len = strlen(city_name);
+        for (int i = 0; i < name_len; i++) {
+            if (isdigit(city_name[i]) || isalpha(city_name[i])) {
+                printf("城市名称不能包含数字或字母，请重新输入：\n");
+                is_right = 0;
+                break;
+            }
+        }
+        if (!is_right) continue;
+
+        // 存在性判断
+        if (find_city_index(city_name) == -1) {
+            printf("城市名称不存在，请重新输入：\n");
+        } else {
+            break;
+        }
+    }
+
+    // 标记城市无效并清空道路
+    int idx = find_city_index(city_name);
+    graph.cities[idx].is_valid = 0;
+    graph.city_count--;
+
+    // 清空该城市所有关联道路（遍历所有城市）
+    for (int i = 0; i < MAX_CITY; i++) {
+        graph.city_distance[idx][i] = INF;
+        graph.city_distance[i][idx] = INF;
+        if (i == idx) {
+            graph.city_distance[idx][i] = 0;
+        }
+    }
+
+    printf("城市【%s】删除成功！\n", city_name);
+    save_data_to_file();
+}
+
+// 查询城市信息
+void query_city() {
+    printf("当前所有有效城市（共%d个）：\n", graph.city_count);
+    if (graph.city_count == 0) {
+        printf("无有效城市\n");
+        return;
+    }
+    for (int i = 0; i < MAX_CITY; i++) {
+        if (graph.cities[i].is_valid) {
+            printf("- %s\n", graph.cities[i].name);
+        }
+    }
+}
+
+// 修改城市名称
+void modify_city() {
+    if (graph.city_count == 0) {
+        printf("城市数量为空，无法修改\n");
+        return;
+    }
+
+    char old_name[CITY_NAME_LEN];
+    char new_name[CITY_NAME_LEN];
+
+    // 输入旧名称
+    printf("请输入要修改的城市名称：");
+    while (1) {
+        scanf("%s", old_name);
+
+        if (strlen(old_name) == 0) {
+            printf("城市名称不能为空，请重新输入：\n");
+            continue;
+        }
+        if (strlen(old_name) >= CITY_NAME_LEN - 1) {
+            printf("城市名称长度不能超过%d个字符，请重新输入：\n", CITY_NAME_LEN - 1);
+            continue;
+        }
+        if (strchr(old_name, ' ')) {
+            printf("城市名称不能包含空格，请重新输入：\n");
+            continue;
+        }
+
+        // 不含数字和字母判断
+        int is_right = 1;
+        int name_len = strlen(old_name);
+        for (int i = 0; i < name_len; i++) {
+            if (isdigit(old_name[i]) || isalpha(old_name[i])) {
+                printf("城市名称不能包含数字或字母，请重新输入：\n");
+                is_right = 0;
+                break;
+            }
+        }
+        if (!is_right) continue;
+
+        // 旧城市必须存在
+        if (find_city_index(old_name) == -1) {
+            printf("城市名称不存在，请重新输入：\n");
+        } else {
+            break;
+        }
+    }
+
+    // 输入新名称
+    printf("请输入新的城市名称：");
+    while (1) {
+        scanf("%s", new_name);
+
+        if (strlen(new_name) == 0) {
+            printf("城市名称不能为空，请重新输入：\n");
+            continue;
+        }
+        if (strlen(new_name) >= CITY_NAME_LEN - 1) {
+            printf("城市名称长度不能超过%d个字符，请重新输入：\n", CITY_NAME_LEN - 1);
+            continue;
+        }
+        if (strchr(new_name, ' ')) {
+            printf("城市名称不能包含空格，请重新输入：\n");
+            continue;
+        }
+
+        // 不含数字和字母判断
+        int is_right = 1;
+        int name_len = strlen(new_name);
+        for (int i = 0; i < name_len; i++) {
+            if (isdigit(new_name[i]) || isalpha(new_name[i])) {
+                printf("城市名称不能包含数字或字母，请重新输入：\n");
+                is_right = 0;
+                break;
+            }
+        }
+        if (!is_right) continue;
+
+        // 新名称不能重复
+        if (find_city_index(new_name) != -1) {
+            printf("新城市名称已存在，请重新输入：\n");
+        } else {
+            break;
+        }
+    }
+
+    // 修改名称
+    int old_idx = find_city_index(old_name);
+    strcpy(graph.cities[old_idx].name, new_name);
+    printf("城市【%s】修改为【%s】成功！\n", old_name, new_name);
+    save_data_to_file();
+}
+
+// 添加道路
+void add_road() {
+    if (graph.city_count < 2) {
+        printf("城市数量不足，无法添加道路\n");
+        return;
+    }
+
+    char city1[CITY_NAME_LEN];
+    char city2[CITY_NAME_LEN];
+
+    // 输入起点城市
+    printf("请输入起点城市名称：");
+    while (1) {
+        scanf("%s", city1);
+
+        if (strlen(city1) == 0) {
+            printf("城市名称不能为空，请重新输入：\n");
+            continue;
+        }
+        if (strlen(city1) >= CITY_NAME_LEN - 1) {
+            printf("城市名称长度不能超过%d个字符，请重新输入：\n", CITY_NAME_LEN - 1);
+            continue;
+        }
+        if (strchr(city1, ' ')) {
+            printf("城市名称不能包含空格，请重新输入：\n");
+            continue;
+        }
+
+        // 不含数字和字母判断
+        int is_right = 1;
+        int name_len = strlen(city1);
+        for (int i = 0; i < name_len; i++) {
+            if (isdigit(city1[i]) || isalpha(city1[i])) {
+                printf("城市名称不能包含数字或字母，请重新输入：\n");
+                is_right = 0;
+                break;
+            }
+        }
+        if (!is_right) continue;
+
+        if (find_city_index(city1) == -1) {
+            printf("城市名称不存在，请重新输入：\n");
+        } else {
+            break;
+        }
+    }
+
+    // 输入终点城市
+    printf("请输入终点城市名称：");
+    while (1) {
+        scanf("%s", city2);
+
+        // 不能与自身相连
+        if (strcmp(city1, city2) == 0) {
+            printf("不能为同一城市添加道路，请重新输入：\n");
+            continue;
+        }
+
+        if (strlen(city2) == 0) {
+            printf("城市名称不能为空，请重新输入：\n");
+            continue;
+        }
+        if (strlen(city2) >= CITY_NAME_LEN - 1) {
+            printf("城市名称长度不能超过%d个字符，请重新输入：\n", CITY_NAME_LEN - 1);
+            continue;
+        }
+        if (strchr(city2, ' ')) {
+            printf("城市名称不能包含空格，请重新输入：\n");
+            continue;
+        }
+
+        // 不含数字和字母判断
+        int is_right = 1;
+        int name_len = strlen(city2);
+        for (int i = 0; i < name_len; i++) {
+            if (isdigit(city2[i]) || isalpha(city2[i])) {
+                printf("城市名称不能包含数字或字母，请重新输入：\n");
+                is_right = 0;
+                break;
+            }
+        }
+        if (!is_right) continue;
+
+        if (find_city_index(city2) == -1) {
+            printf("城市名称不存在，请重新输入：\n");
+        } else {
+            break;
+        }
+    }
+
+    // 输入道路距离
+    printf("请输入道路距离：");
+    char distance[999];
+    while (1) {
+        scanf("%s", &distance);
+        int is_right=1;
+        int name_len=strlen(distance);
+        for (int i=0;i<name_len;i++) {
+        	if (isalpha(distance[i])) {
+        		printf("道路距离不能包含字母，重新输入：\n");
+        		is_right=0;
+        		break;
+			}
+		}
+		if (!is_right) continue;
+        if (atoi(distance) <= 0) {
+            printf("道路距离必须大于0，请重新输入：\n");
+            continue;
+        }
+        break;
+    }
+
+    // 添加道路
+    int idx1 = find_city_index(city1);
+    int idx2 = find_city_index(city2);
+    if (graph.city_distance[idx1][idx2] != INF) {
+        printf("城市【%s】与【%s】之间已存在道路\n", city1, city2);
+        return;
+    }
+
+    // 无向图双向赋值
+    graph.city_distance[idx1][idx2] = atoi(distance);
+    graph.city_distance[idx2][idx1] = atoi(distance);
+    printf("道路【%s <-> %s（距离：%d）】添加成功！\n", city1, city2, distance);
+    save_data_to_file();
+}
+
+// 删除道路
+void delete_road() {
+    if (graph.city_count < 2) {
+        printf("城市数量不足，无法删除道路\n");
+        return;
+    }
+
+    char city1[CITY_NAME_LEN];
+    char city2[CITY_NAME_LEN];
+
+    // 输入起点城市
+    printf("请输入起点城市名称：");
+    while (1) {
+        scanf("%s", city1);
+
+        if (strlen(city1) == 0) {
+            printf("城市名称不能为空，请重新输入：\n");
+            continue;
+        }
+        if (strlen(city1) >= CITY_NAME_LEN - 1) {
+            printf("城市名称长度不能超过%d个字符，请重新输入：\n", CITY_NAME_LEN - 1);
+            continue;
+        }
+        if (strchr(city1, ' ')) {
+            printf("城市名称不能包含空格，请重新输入：\n");
+            continue;
+        }
+
+        // 不含数字和字母判断
+        int is_right = 1;
+        int name_len = strlen(city1);
+        for (int i = 0; i < name_len; i++) {
+            if (isdigit(city1[i]) || isalpha(city1[i])) {
+                printf("城市名称不能包含数字或字母，请重新输入：\n");
+                is_right = 0;
+                break;
+            }
+        }
+        if (!is_right) continue;
+
+        if (find_city_index(city1) == -1) {
+            printf("城市名称不存在，请重新输入：\n");
+        } else {
+            break;
+        }
+    }
+
+    // 输入终点城市
+    printf("请输入终点城市名称：");
+    while (1) {
+        scanf("%s", city2);
+
+        if (strlen(city2) == 0) {
+            printf("城市名称不能为空，请重新输入：\n");
+            continue;
+        }
+        if (strlen(city2) >= CITY_NAME_LEN - 1) {
+            printf("城市名称长度不能超过%d个字符，请重新输入：\n", CITY_NAME_LEN - 1);
+            continue;
+        }
+        if (strchr(city2, ' ')) {
+            printf("城市名称不能包含空格，请重新输入：\n");
+            continue;
+        }
+
+        // 不含数字和字母判断
+        int is_right = 1;
+        int name_len = strlen(city2);
+        for (int i = 0; i < name_len; i++) {
+            if (isdigit(city2[i]) || isalpha(city2[i])) {
+                printf("城市名称不能包含数字或字母，请重新输入：\n");
+                is_right = 0;
+                break;
+            }
+        }
+        if (!is_right) continue;
+
+        if (find_city_index(city2) == -1) {
+            printf("城市名称不存在，请重新输入：\n");
+        } else {
+            break;
+        }
+    }
+
+    // 判断道路是否存在
+    int idx1 = find_city_index(city1);
+    int idx2 = find_city_index(city2);
+    if (graph.city_distance[idx1][idx2] == INF) {
+        printf("城市【%s】与【%s】之间不存在道路\n", city1, city2);
+        return;
+    }
+
+    // 无向图双向置为无穷大
+    graph.city_distance[idx1][idx2] = INF;
+    graph.city_distance[idx2][idx1] = INF;
+    printf("道路【%s <-> %s】删除成功！\n", city1, city2);
+    save_data_to_file();
+}
+
+// 查询道路信息
+void query_road() {
+    if (graph.city_count < 2) {
+        printf("城市数量不足，无道路信息\n");
+        return;
+    }
+
+    char city1[CITY_NAME_LEN];
+    printf("请输入要查询的城市名称：");
+    while (1) {
+        scanf("%s", city1);
+
+        if (strlen(city1) == 0) {
+            printf("城市名称不能为空，请重新输入：\n");
+            continue;
+        }
+        if (strlen(city1) >= CITY_NAME_LEN - 1) {
+            printf("城市名称长度不能超过%d个字符，请重新输入：\n", CITY_NAME_LEN - 1);
+            continue;
+        }
+        if (strchr(city1, ' ')) {
+            printf("城市名称不能包含空格，请重新输入：\n");
+            continue;
+        }
+
+        // 不含数字和字母判断（修正逻辑，与其他函数保持一致）
+        int is_right = 1;
+        int name_len = strlen(city1);
+        for (int i = 0; i < name_len; i++) {
+            if (isdigit(city1[i]) || isalpha(city1[i])) {
+                printf("城市名称不能包含数字或字母，请重新输入：\n");
+                is_right = 0;
+                break;
+            }
+        }
+        if (!is_right) continue;
+
+        if (find_city_index(city1) == -1) {
+            printf("城市名称不存在，请重新输入：\n");
+        } else {
+            break;
+        }
+    }
+
+    int idx1 = find_city_index(city1);
+    int road_count = 0;
+    printf("城市【%s】的道路信息如下：\n", city1);
+    for (int i = 0; i < MAX_CITY; i++) {
+        if (i == idx1) continue; // 跳过自身
+        if (graph.cities[i].is_valid && graph.city_distance[idx1][i] != INF && graph.city_distance[idx1][i] > 0) {
+            printf("- %s <-> %s  距离：%d\n", city1, graph.cities[i].name, graph.city_distance[idx1][i]);
+            road_count++;
+        }
+    }
+
+    if (road_count == 0) {
+        printf("该城市无有效道路\n");
+    } else {
+        printf("该城市共有%d条有效道路\n", road_count);
+    }
+}
+
+// 修改道路距离（统一函数名为modify_road）
+void modify_road() {
+    if (graph.city_count < 2) {
+        printf("城市数量不足，无法修改道路\n");
+        return;
+    }
+
+    char city1[CITY_NAME_LEN];
+    char city2[CITY_NAME_LEN];
+
+    // 输入起点城市
+    printf("请输入起点城市名称：");
+    while (1) {
+        scanf("%s", city1);
+
+        if (strlen(city1) == 0) {
+            printf("城市名称不能为空，请重新输入：\n");
+            continue;
+        }
+        if (strlen(city1) >= CITY_NAME_LEN - 1) {
+            printf("城市名称长度不能超过%d个字符，请重新输入：\n", CITY_NAME_LEN - 1);
+            continue;
+        }
+        if (strchr(city1, ' ')) {
+            printf("城市名称不能包含空格，请重新输入：\n");
+            continue;
+        }
+
+        // 不含数字和字母判断
+        int is_right = 1;
+        int name_len = strlen(city1);
+        for (int i = 0; i < name_len; i++) {
+            if (isdigit(city1[i]) || isalpha(city1[i])) {
+                printf("城市名称不能包含数字或字母，请重新输入：\n");
+                is_right = 0;
+                break;
+            }
+        }
+        if (!is_right) continue;
+
+        if (find_city_index(city1) == -1) {
+            printf("城市名称不存在，请重新输入：\n");
+        } else {
+            break;
+        }
+    }
+
+    // 输入终点城市
+    printf("请输入终点城市名称：");
+    while (1) {
+        scanf("%s", city2);
+
+        // 不能与自身相连
+        if (strcmp(city1, city2) == 0) {
+            printf("不能修改同一城市的道路，请重新输入：\n");
+            continue;
+        }
+
+        if (strlen(city2) == 0) {
+            printf("城市名称不能为空，请重新输入：\n");
+            continue;
+        }
+        if (strlen(city2) >= CITY_NAME_LEN - 1) {
+            printf("城市名称长度不能超过%d个字符，请重新输入：\n", CITY_NAME_LEN - 1);
+            continue;
+        }
+        if (strchr(city2, ' ')) {
+            printf("城市名称不能包含空格，请重新输入：\n");
+            continue;
+        }
+
+        // 不含数字和字母判断
+        int is_right = 1;
+        int name_len = strlen(city2);
+        for (int i = 0; i < name_len; i++) {
+            if (isdigit(city2[i]) || isalpha(city2[i])) {
+                printf("城市名称不能包含数字或字母，请重新输入：\n");
+                is_right = 0;
+                break;
+            }
+        }
+        if (!is_right) continue;
+
+        if (find_city_index(city2) == -1) {
+            printf("城市名称不存在，请重新输入：\n");
+        } else {
+            break;
+        }
+    }
+
+    // 判断道路是否存在
+    int idx1 = find_city_index(city1);
+    int idx2 = find_city_index(city2);
+    if (graph.city_distance[idx1][idx2] == INF) {
+        printf("城市【%s】与【%s】之间不存在道路\n", city1, city2);
+        return;
+    }
+
+    // 输入新距离
+    printf("请输入新的道路距离（正数）：");
+    int distance;
+    while (1) {
+        scanf("%d", &distance);
+        if (distance <= 0) {
+            printf("道路距离必须大于0，请重新输入：\n");
+            continue;
+        }
+        break;
+    }
+
+    // 更新道路距离（无向图双向赋值）
+    graph.city_distance[idx1][idx2] = distance;
+    graph.city_distance[idx2][idx1] = distance;
+    printf("城市【%s】与【%s】之间的道路距离已更新为%d！\n", city1, city2, distance);
+    save_data_to_file();
+}
+
+// Dijkstra算法求最短路径
+void dijkstra_shortest_path() {
+    if (graph.city_count < 2) {
+        printf("城市数量不足，无法查询最短路径\n");
+        return;
+    }
+
+    char start_city[CITY_NAME_LEN];
+    char end_city[CITY_NAME_LEN];
+    printf("请输入起点城市名称：");
+    scanf("%s", start_city);
+    printf("请输入终点城市名称：");
+    scanf("%s", end_city);
+
+    int start_idx = find_city_index(start_city);
+    int end_idx = find_city_index(end_city);
+
+    // 合法性检查
+    if (start_idx == -1) {
+        printf("起点城市【%s】不存在！\n", start_city);
+        return;
+    }
+    if (end_idx == -1) {
+        printf("终点城市【%s】不存在！\n", end_city);
+        return;
+    }
+    if (start_idx == end_idx) {
+        printf("起点和终点为同一城市，路径距离为0！\n");
+        return;
+    }
+
+    int dist[MAX_CITY];
+    int visited[MAX_CITY];
+    int prev[MAX_CITY];
+
+    // 初始化
+    for (int i = 0; i < MAX_CITY; i++) {
+        dist[i] = graph.city_distance[start_idx][i];
+        visited[i] = 0;
+        prev[i] = (dist[i] != INF && dist[i] > 0) ? start_idx : -1;
+    }
+    visited[start_idx] = 1;
+    dist[start_idx] = 0;
+
+    // Dijkstra核心循环
+    for (int i = 1; i < graph.city_count; i++) {
+        // 找到未访问的距离最小节点
+        int min_dist = INF;
+        int u = -1;
+        for (int j = 0; j < MAX_CITY; j++) {
+            if (graph.cities[j].is_valid && !visited[j] && dist[j] < min_dist) {
+                min_dist = dist[j];
+                u = j;
+            }
+        }
+        if (u == -1) break; // 无可达节点
+        visited[u] = 1;
+
+        // 更新邻接节点距离
+        for (int v = 0; v < MAX_CITY; v++) {
+            if (graph.cities[v].is_valid && !visited[v] && graph.city_distance[u][v] != INF) {
+                long long new_dist = (long long)dist[u] + graph.city_distance[u][v]; // 防止溢出
+                if (new_dist < dist[v]) {
+                    dist[v] = (int)new_dist;
+                    prev[v] = u;
+                }
+            }
+        }
+    }
+
+    // 判断是否可达
+    if (dist[end_idx] == INF) {
+        printf("城市【%s】与【%s】之间不存在可达路径\n", start_city, end_city);
+        return;
+    }
+
+    // 回溯路径
+    int path[MAX_CITY];
+    int path_len = 0;
+    int temp_idx = end_idx;
+    while (temp_idx != -1) {
+        path[path_len++] = temp_idx;
+        temp_idx = prev[temp_idx];
+    }
+
+    // 打印路径
+    printf("从【%s】到【%s】的最短路径：\n", start_city, end_city);
+    for (int i = path_len - 1; i >= 0; i--) {
+        if (i == 0) {
+            printf("%s\n", graph.cities[path[i]].name);
+        } else {
+            printf("%s -> ", graph.cities[path[i]].name);
+        }
+    }
+    printf("最短路径距离：%d\n", dist[end_idx]);
+}
+
+// 一级主菜单
+void print_menu_first() {
+    printf("\n==================== 城市交通导航系统 ===================\n");
+    printf("=                                                       =\n");
+    printf("=		   1.  城市菜单                         =\n");
+    printf("=                                                       =\n");
+    printf("=		   2.  道路菜单                         =\n");
+    printf("=                                                       =\n");
+    printf("= 		   3.  最优路径查询                     =\n");
+    printf("=                                                       =\n");
+    printf("=		   4.  文件操作                         =\n");
+    printf("=                                                       =\n");
+    printf("=		   0.  退出系统                         =\n");
+    printf("=                                                       =\n");
+    printf("=========================================================\n");
+    printf("请输入您的选择：");
+}
+
+// 城市子菜单
+void print_menu_city() {
+    printf("\n==================== 城市菜单 ====================\n");
+    printf("1.  添加城市        2.  删除城市        3.  查询城市\n");
+    printf("4.  修改城市        5.  回退\n");
+    printf("====================================================\n");
+    printf("请输入您的选择：");
+}
+
+// 道路子菜单（修正命名）
+void print_menu_road() {
+    printf("\n==================== 道路菜单 ====================\n");
+    printf("1.  添加道路        2.  删除道路        3.  查询道路\n");
+    printf("4.  修改道路        5.  回退\n");
+    printf("====================================================\n");
+    printf("请输入您的选择：");
+}
+
+// 文件操作子菜单
+void print_menu_file() {
+    printf("\n==================== 文件菜单 ====================\n");
+    printf("1.  加载文件数据        2.  保存文件数据\n");
+    printf("3.  回退\n");
+    printf("====================================================\n");
+    printf("请输入您的选择：");
+}
+
+// 主函数
+int main() {
+    int choice_first;
+    int choice_city;
+    int choice_road;
+    int choice_file;
+
+    // 程序启动初始化
+    init_graph();
+    load_data_from_file();
+
+    // 一级菜单循环
+    while (1) {
+        print_menu_first();
+        scanf("%d", &choice_first);
+
+        switch (choice_first) {
+            case 1: // 城市菜单
+                while (1) {
+                    print_menu_city();
+                    scanf("%d", &choice_city);
+                    switch (choice_city) {
+                        case 1:
+                            add_city();
+                            break;
+                        case 2:
+                            delete_city();
+                            break;
+                        case 3:
+                            query_city();
+                            break;
+                        case 4:
+                            modify_city();
+                            break;
+                        case 5:
+                            printf("已回退到主菜单！\n");
+                            goto exit_city_menu;
+                        default:
+                            printf("输入无效，请重新选择！\n");
+                            break;
+                    }
+                }
+                exit_city_menu:
+                    break;
+
+            case 2: // 道路菜单
+                while (1) {
+                    print_menu_road(); // 调用修正后的菜单函数
+                    scanf("%d", &choice_road);
+                    switch (choice_road) {
+                        case 1:
+                            add_road();
+                            break;
+                        case 2:
+                            delete_road();
+                            break;
+                        case 3:
+                            query_road();
+                            break;
+                        case 4:
+                            modify_road();
+                            break;
+                        case 5:
+                            printf("已回退到主菜单！\n");
+                            goto exit_road_menu;
+                        default:
+                            printf("输入无效，请重新选择！\n");
+                            break;
+                    }
+                }
+                exit_road_menu:
+                    break;
+
+            case 3: // 最优路径查询
+                dijkstra_shortest_path();
+                break;
+
+            case 4: // 文件操作
+                while (1) {
+                    print_menu_file();
+                    scanf("%d", &choice_file);
+                    switch (choice_file) {
+                        case 1:
+                            load_data_from_file();
+                            break;
+                        case 2:
+                            save_data_to_file();
+                            break;
+                        case 3:
+                            printf("已回退到主菜单！\n");
+                            goto exit_file_menu;
+                        default:
+                            printf("输入无效，请重新选择！\n");
+                            break;
+                    }
+                }
+                exit_file_menu:
+                    break;
+
+            case 0: // 退出系统
+                save_data_to_file();
+                printf("感谢使用城市交通导航系统，程序退出！\n");
+                exit(0);
+
+            default:
+                printf("输入无效，请重新选择！\n");
+                break;
+        }
+    }
+
+    return 0;
+}
